@@ -7,22 +7,35 @@
  * 
  */
 
-
- int ind = 0;
+int ind = 0;
 
  // Make arrays of digital pins to manipulate the AD0 pins of six IMU's 
 
- int D[] = {D1, D2, D3, D4, D5, D6};
+int d[] = {2, 3, 4, 5, 6, 7};
 
- while(1)
-{
-  D[ind] = 1;  //set the AD0 pin of the first IMU to high
-  x = read.address(0x69);
-  D[ind] = 0;
-  ind = (ind+1)%7;
+void setup() {
+
+Serial.begin(115200);
+pinMode(d[0], OUTPUT);
+pinMode(d[1], OUTPUT);
+pinMode(d[2], OUTPUT);
+pinMode(d[3], OUTPUT);
+pinMode(d[4], OUTPUT);
+pinMode(d[5], OUTPUT);
+
+
+}
+
+void loop() {
+  digitalWrite(d[ind], HIGH);  //set the AD0 pin of the first IMU to high
+  Serial.println(d[ind]);
+  delay(200);
+
+  
+  digitalWrite(d[ind], LOW);
+  ind = (ind+1)%6;
   
 
 
-  
- }
+}
 

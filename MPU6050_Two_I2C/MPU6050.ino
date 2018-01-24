@@ -35,11 +35,18 @@ double kalAngleX, kalAngleY; // Calculated angle using a Kalman filter
 uint32_t timer;
 uint8_t i2cData[14]; // Buffer for I2C data
 
+int ind = 0;
+// Make arrays of digital pins to manipulate the AD0 pins of six IMU's 
+int d[] = {2, 3};
+double offsetX[] = {-14.50, -4.30};
+double offsetY[] = {-17.30, 22.00};
+
 // TODO: Make calibration routine
 
 void setup() {
   Serial.begin(115200);
   Wire.begin();
+  
   TWBR = ((F_CPU / 400000L) - 16) / 2; // Set I2C frequency to 400kHz
 
   i2cData[0] = 7; // Set the sample rate to 1000Hz - 8kHz/(7+1) = 1000Hz
@@ -50,9 +57,9 @@ void setup() {
   while (i2cWrite(0x6B, 0x01, true)); // PLL with X axis gyroscope reference and disable sleep mode
 
   while (i2cRead(0x75, i2cData, 1));
-  if (i2cData[0] != 0x68) { // Read "WHO_AM_I" register
+  if (i2cData[0] != 0x69) { // Read "WHO_AM_I" register
     Serial.print(F("Error reading sensor"));
-    while (1);
+    //while (1);
   }
 
   delay(100); // Wait for sensor to stabilize
@@ -82,9 +89,39 @@ void setup() {
   compAngleY = pitch;
 
   timer = micros();
+  
+  pinMode(d[0], OUTPUT);
+  pinMode(d[1], OUTPUT);
+//  pinMode(d[2], OUTPUT);
+//  pinMode(d[3], OUTPUT);
+//  pinMode(d[4], OUTPUT);
+//  pinMode(d[5], OUTPUT);
+
+
 }
 
 void loop() {
+  digitalWrite(d[ind], HIGH);  //set the AD0 pin of the IMU to high
+  Serial.println(d[ind]); // Print which IMU it's polling
+  delay(500);
+  
+  readIMUdata();//read IMU data 
+
+  
+  digitalWrite(d[ind], LOW);
+  ind = (ind+1)%2;
+  
+
+
+}
+
+
+
+void readIMUdata() {
+
+  double startTime = millis();
+
+  while(millis() - startTime < 5000){
   /* Update all the values */
   while (i2cRead(0x3B, i2cData, 14));
   accX = ((i2cData[0] << 8) | i2cData[1]);
@@ -169,19 +206,19 @@ void loop() {
 
   //Serial.print(roll); Serial.print("\t");
  // Serial.print(gyroXangle); Serial.print("\t");
-  Serial.print(compAngleX); Serial.print("\t");
+  //Serial.print(compAngleX); Serial.print("\t");
   
   Serial.print("X angle = ");
-  Serial.print(kalAngleX); Serial.print("\t");
+  Serial.print(kalAngleX - offsetX[ind]); Serial.print("\t");
 
   Serial.print("\t");
 
   //Serial.print(pitch); Serial.print("\t");
   //Serial.print(gyroYangle); Serial.print("\t");
-  //Serial.print(compAngleY); Serial.print("\t");
+  ///Serial.print(compAngleY); Serial.print("\t");
   
-  //Serial.print("Y angle = ");
-  //Serial.print(kalAngleY); Serial.print("\t");
+  Serial.print("Y angle = ");
+  Serial.print(kalAngleY - offsetY[ind]); Serial.print("\t");
 
 #if 0 // Set to 1 to print the temperature
   Serial.print("\t");
@@ -192,4 +229,5 @@ void loop() {
 
   Serial.print("\r\n");
   delay(25);
+  }
 }
