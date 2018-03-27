@@ -17,12 +17,13 @@ A mux is used to cycle through each sensor.
 #include "Wire.h"
 #endif
 
-//#define OUTPUT_READABLE_ACCELGYRO//Uncomment to display ax, ay, az values of sensors
-
 MPU6050 accelgyro(0x68);  //Declare memory address of sensor, all sensors will be at 0x68 and will be cycled through by the mux
 const int sensorNum = 2;  //Number of sensors connected, supports up to 8
-const int buttonPin = 2;  // the number of the pushbutton pin
+const int buttonPin = 2;  // the number of the pushbutton pin, used for calibration
+const int switchPin = 3;  // the number of the switch pin, used for modes
 int buttonState = 0;      // variable for reading the pushbutton status
+int modeState = 0;      // variable for reading the pushbutton status
+int degTime15, degTime5;
 
 //Declare variables needed
 int16_t ax[sensorNum], ay[sensorNum], az[sensorNum], ax1[sensorNum], ay1[sensorNum], az1[sensorNum];
@@ -31,54 +32,56 @@ int16_t gx[sensorNum], gy[sensorNum], gz[sensorNum], gx1[sensorNum], gy1[sensorN
 double gyroXangle[sensorNum], gyroYangle[sensorNum]; // Angle calculate using the gyro only
 double compAngleX[sensorNum], compAngleY[sensorNum]; // Calculated angle using a complementary filter
 double roll[sensorNum], pitch[sensorNum], gyroXrate[sensorNum], gyroYrate[sensorNum], dt[sensorNum];
-double offsetY[sensorNum], offsetX[sensorNum], offsetZ[sensorNum], angleX[sensorNum], angleY[sensorNum];
-
+double offsetY[sensorNum], offsetX[sensorNum], angleX[sensorNum], angleY[sensorNum];
 
 uint32_t derivativestartTime[sensorNum], startTime1, startTime2, startTimeSMA; //startTime 1 used for >15deg, startTime2 used for 5<deg<15, startTimeSMA used for actuating SMA
 
 #define LED_PIN 13
 bool blinkState = false;
-bool startCounting = false; //Used to count time user is in bad posture
-bool finishCalibration=false;
+bool finishCalibration=false; 
+bool standing = false;
+bool sitting = false;
 
 //Used to cycle through sensors connected to mux. 0-7
 void tcaselect(uint8_t i) {
-  if (i > 7) return;
- 
+  if (i > 7) return; 
   Wire.beginTransmission(0x70);
   Wire.write(1 << i);
   Wire.endTransmission();  
 }
 
 void setup() {
-  // join I2C bus (I2Cdev library doesn't do this automatically)
+  //join I2C bus (I2Cdev library doesn't do this automatically)
   #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
       Wire.begin();
   #elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
       Fastwire::setup(400, true);
   #endif
 
-  // initialize serial communication
-  // 38400 chosen because it works as well at 8MHz as it does at 16MHz
+  //initialize serial communication
+  //38400 chosen because it works as well at 8MHz as it does at 16MHz
   Serial.begin(38400);
 
-   // initialize the pushbutton pin as an input:
+  // initialize the pushbutton pin as an input:
   pinMode(buttonPin, INPUT);
 
-  // initialize devices
+  //initialize devices
   Serial.println("Initializing I2C devices...");
+  
+  //Cycle through each sensor in mux
   for(int i=0;i<sensorNum;i++){
     tcaselect(i);
     accelgyro.initialize();  
-    Serial.println("Done Initializing I2C devices...");
+    Serial.print("Done Initializing I2C devices...");Serial.println(i);//individually init each sensor
 
     // verify connection
-    Serial.println("Testing device connections...");   
+    Serial.print("Testing device connections..."); Serial.println(i);    
     Serial.println(accelgyro.testConnection() ? "MPU6050 connection successful" : "MPU6050 connection failed");               
-
+  
     derivativestartTime[i] = micros();
-
   }
+    Serial.println("\n\nPlease calibrate sensors once in a upright posture");
+    Serial.println("Choose sitting mode(switch 1) or standing mode(switch 2)");
 }
 
 void loop() {
@@ -90,21 +93,6 @@ void loop() {
     //Calculate delta time
     dt[i] = (micros() - derivativestartTime[i]) / 1000000; // Calculate delta time
     derivativestartTime[i] = micros();
-    
-    // these methods (and a few others) are also available
-    //accelgyro.getAcceleration(&ax, &ay, &az);
-    //accelgyro.getRotation(&gx, &gy, &gz);
-
-    #ifdef OUTPUT_READABLE_ACCELGYRO
-    // display tab-separated accel/gyro x/y/z values    
-      Serial.println("\t");
-      Serial.print("ax");Serial.print(i);Serial.print(": ");
-      Serial.print(ax[i]); Serial.print("\t");
-      Serial.print("ay");Serial.print(i);Serial.print(": ");
-      Serial.print(ay[i]); Serial.print("\t");
-      Serial.print("az");Serial.print(i);Serial.print(": ");
-      Serial.print(az[i]); Serial.println("\t");        
-    #endif
 
     //Calculate roll and pitch, used in comp filter
     roll[i]  = atan2(ay[i], az[i]) * RAD_TO_DEG;
@@ -125,7 +113,6 @@ void loop() {
     //Calculate comp angles     
     compAngleX[i] = 0.93 * (compAngleX[i] + gyroXrate[i] * dt[i]) + 0.07 * roll[i]; // Calculate the angle using a Complimentary filter
     compAngleY[i] = 0.93 * (compAngleY[i] + gyroYrate[i] * dt[i]) + 0.07 * pitch[i];
-
     angleX[i] = compAngleX[i]-offsetX[i];
     angleY[i] = compAngleY[i]-offsetY[i];
   
@@ -144,30 +131,44 @@ void loop() {
       calibration();
       }      
 
+    //ditermine sitting or standing mode
+    modeState = digitalRead(switchPin);
+    if (modeState == HIGH) {
+      //Serial.print("sitting\n");
+      degTime15 = 30000;
+      degTime5 = 120000;
+      }
+      
+    if (modeState == LOW) {
+      //Serial.print("standing\n");
+      degTime15 = 60000;
+      degTime5 = 300000;
+      }    
 
     //If user's posture is >15degrees for 30seconds or more 
     if((abs(angleX[i]) > 15.0 || abs(angleY[i]) > 15.0) && finishCalibration){
-      if(((millis()-startTime1) >=120000)){
-         Serial.print(">15deg\n");
+      Serial.print(">15deg\n");
+      if(((millis()-startTime1) >=degTime15)){
+         Serial.print("Activating SMA for 30sec\n");
          activateSMA();
         }
       }    
     if(abs(angleX[i]) < 15.0 && abs(angleY[i]) < 15.0){
       startTime1=millis();
-      Serial.print("Start Counting1 \n");
+      //Serial.print("Start Counting1 \n");
       }   
 
-
     //If user's posture 5<deg<15 for 2mins or more
-    if((abs(angleX[i]) > 5.0 || abs(angleY[i]) > 5.0) && ((abs(angleX[i]) < 15.0 || abs(angleY[i]) < 15.0)) && finishCalibration){
-      if(((millis()-startTime2) >=10000)){
-         Serial.print("5<deg<15\n");
-         activateSMA();
+    if((abs(angleX[i]) > 5.0 || abs(angleY[i]) > 5.0) && (((abs(angleX[i]) < 15.0) && (abs(angleY[i]) < 15.0))) && finishCalibration){
+      Serial.print("5<deg<15\n");
+      if(((millis()-startTime2) >=degTime5)){
+         Serial.print("Activating SMA for 30sec\n");
+         activateSMA();         
         }
       }
     if(abs(angleX[i]) < 5.0 && abs(angleY[i]) < 5.0){
       startTime2=millis();
-      Serial.print("Start Counting2 \n");
+      Serial.print("<5deg\n");
       } 
         
   } 
@@ -181,15 +182,15 @@ void loop() {
 ///////////////////////////////////   FUNCTIONS   ////////////////////////////////////
 
 void calibration(){
-for(int i=0;i<sensorNum;i++){
-  tcaselect(i);
-  //Get offsets  
-  offsetX[i]=compAngleX[i];
-  offsetY[i]=compAngleY[i];  
-  angleX[i] = compAngleX[i]-offsetX[i];
-  angleY[i] = compAngleY[i]-offsetY[i];
-  finishCalibration=true;
-  }
+  for(int i=0;i<sensorNum;i++){
+    tcaselect(i);
+    //Get offsets  
+    offsetX[i]=compAngleX[i];
+    offsetY[i]=compAngleY[i];  
+    angleX[i] = compAngleX[i]-offsetX[i];
+    angleY[i] = compAngleY[i]-offsetY[i];
+    finishCalibration=true;
+   }
 }
 
 void printAngles(){
@@ -205,6 +206,19 @@ void printAngles(){
   }
 }
 
+void printGryoValues(){
+  for(int i=0;i<sensorNum;i++){
+    tcaselect(i);     
+      Serial.println("\t");
+      Serial.print("ax");Serial.print(i);Serial.print(": ");
+      Serial.print(ax[i]); Serial.print("\t");
+      Serial.print("ay");Serial.print(i);Serial.print(": ");
+      Serial.print(ay[i]); Serial.print("\t");
+      Serial.print("az");Serial.print(i);Serial.print(": ");
+      Serial.print(az[i]); Serial.println("\t");
+  }
+}
+
 void elapsedTime(){
    
 }
@@ -212,10 +226,11 @@ void elapsedTime(){
 void activateSMA(){
    startTimeSMA = millis();
    while(millis()-startTimeSMA <= 30000){
-     Serial.print("Activate SMA for 30sec\n");  
+     //Serial.print("Activate SMA for 30sec\n");  
    }
   startTime1=millis();
   startTime2=millis();
+  Serial.print("Done activating\n");
 }
 
 
