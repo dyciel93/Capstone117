@@ -18,7 +18,7 @@ A mux is used to cycle through each sensor.
 #endif
 
 MPU6050 accelgyro(0x68);  //Declare memory address of sensor, all sensors will be at 0x68 and will be cycled through by the mux
-const int sensorNum = 2;  //Number of sensors connected, supports up to 8
+const int sensorNum = 6;  //Number of sensors connected, supports up to 8
 const int buttonPin = 2;  // the number of the pushbutton pin, used for calibration
 const int switchPin = 3;  // the number of the switch pin, used for modes
 int buttonState = 0;      // variable for reading the pushbutton status
@@ -34,7 +34,7 @@ double compAngleX[sensorNum], compAngleY[sensorNum]; // Calculated angle using a
 double roll[sensorNum], pitch[sensorNum], gyroXrate[sensorNum], gyroYrate[sensorNum], dt[sensorNum];
 double offsetY[sensorNum], offsetX[sensorNum], angleX[sensorNum], angleY[sensorNum];
 
-uint32_t derivativestartTime[sensorNum], startTime1, startTime2, startTimeSMA; //startTime 1 used for >15deg, startTime2 used for 5<deg<15, startTimeSMA used for actuating SMA
+uint32_t derivativestartTime[sensorNum], startTime1[sensorNum], startTime2[sensorNum], startTimeSMA, activateSMATime; //startTime 1 used for >15deg, startTime2 used for 5<deg<15, startTimeSMA used for actuating SMA
 
 #define LED_PIN 13
 bool blinkState = false;
@@ -64,6 +64,10 @@ void setup() {
 
   // initialize the pushbutton pin as an input:
   pinMode(buttonPin, INPUT);
+
+  //Set SMA output pin
+  pinMode(4,OUTPUT);
+  digitalWrite(4, LOW);
 
   //initialize devices
   Serial.println("Initializing I2C devices...");
@@ -115,7 +119,15 @@ void loop() {
     compAngleY[i] = 0.93 * (compAngleY[i] + gyroYrate[i] * dt[i]) + 0.07 * pitch[i];
     angleX[i] = compAngleX[i]-offsetX[i];
     angleY[i] = compAngleY[i]-offsetY[i];
-  
+
+    angleY[1]=0;
+    angleY[3]=0;
+    angleY[4]=0;
+    angleY[5]=0;
+
+    angleX[0]=0;
+    angleX[2]=0;
+    
     // Reset the gyro angle when it has drifted too much
     if (gyroXangle[i] < -180 || gyroXangle[i] > 180)
       gyroXangle[i] = compAngleX[i];
@@ -135,44 +147,44 @@ void loop() {
     modeState = digitalRead(switchPin);
     if (modeState == HIGH) {
       //Serial.print("sitting\n");
-      degTime15 = 30000;
+      degTime15 = 40000;
       degTime5 = 120000;
       }
       
     if (modeState == LOW) {
       //Serial.print("standing\n");
-      degTime15 = 60000;
-      degTime5 = 300000;
+      degTime15 = 6000;
+      degTime5 = 30000;
       }    
 
     //If user's posture is >15degrees for 30seconds or more 
-    if((abs(angleX[i]) > 15.0 || abs(angleY[i]) > 15.0) && finishCalibration){
-      Serial.print(">15deg\n");
-      if(((millis()-startTime1) >=degTime15)){
+    if((abs(angleX[i]) > 20.0 || abs(angleY[i]) > 20.0) && finishCalibration){
+      Serial.print(">20deg\n");
+      if(((millis()-startTime1[i]) >=degTime15)){
          Serial.print("Activating SMA for 30sec\n");
          activateSMA();
         }
       }    
-    if(abs(angleX[i]) < 15.0 && abs(angleY[i]) < 15.0){
-      startTime1=millis();
-      //Serial.print("Start Counting1 \n");
+    if((abs(angleX[i]) < 20.0 && abs(angleY[i]) < 20.0) && (abs(angleX[i]) > 0.0 || abs(angleY[i]) > 0.0)){
+      startTime1[i]=millis();
+      Serial.print("<20deg \n");
       }   
 
     //If user's posture 5<deg<15 for 2mins or more
-    if((abs(angleX[i]) > 5.0 || abs(angleY[i]) > 5.0) && (((abs(angleX[i]) < 15.0) && (abs(angleY[i]) < 15.0))) && finishCalibration){
-      Serial.print("5<deg<15\n");
-      if(((millis()-startTime2) >=degTime5)){
+    if((abs(angleX[i]) > 10.0 || abs(angleY[i]) > 10.0) && (((abs(angleX[i]) < 20.0) && (abs(angleY[i]) < 20.0))) && finishCalibration){
+      Serial.print("10<deg<20\n");
+      if(((millis()-startTime2[i]) >=degTime5)){
          Serial.print("Activating SMA for 30sec\n");
          activateSMA();         
         }
       }
-    if(abs(angleX[i]) < 5.0 && abs(angleY[i]) < 5.0){
-      startTime2=millis();
-      Serial.print("<5deg\n");
+    if((abs(angleX[i]) < 10.0 && abs(angleY[i]) < 10.0) && (abs(angleX[i]) > 0.0 || abs(angleY[i]) > 0.0)){
+      startTime2[i]=millis();
+      Serial.print("<10deg\n");
       } 
         
   } 
-  delay(25);//Small delay so sensors are not constantly polled 
+  //delay(2);// delay so sensors are not constantly polled 
   // blink LED to indicate activity
   blinkState = !blinkState;
   digitalWrite(LED_PIN, blinkState);
@@ -225,11 +237,22 @@ void elapsedTime(){
 
 void activateSMA(){
    startTimeSMA = millis();
-   while(millis()-startTimeSMA <= 30000){
-     //Serial.print("Activate SMA for 30sec\n");  
+   activateSMATime = millis();
+
+   while(millis()-activateSMATime <=15000){
+    Serial.print("Turning on SMA\n");
+    digitalWrite(4,HIGH);
    }
-  startTime1=millis();
-  startTime2=millis();
+   
+   while(millis()-startTimeSMA <= 30000){
+     Serial.print("SMA cooling\n");  
+     digitalWrite(4, LOW);
+   }
+   for(int i=0;i<sensorNum;i++){
+    tcaselect(i);
+    startTime1[i]=millis();
+    startTime2[i]=millis();
+   }
   Serial.print("Done activating\n");
 }
 
